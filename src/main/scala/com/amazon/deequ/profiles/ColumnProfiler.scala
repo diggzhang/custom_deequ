@@ -54,6 +54,7 @@ private[deequ] case class NumericColumnStatistics(
 
 private[deequ] case class DateTypeColumnStatistics(
     maxima: Map[String, sqlTimestamp],
+    minima: Map[String, sqlTimestamp]
 )
 
 private[deequ] case class CategoricalColumnStatistics(histograms: Map[String, Distribution])
@@ -191,8 +192,6 @@ object ColumnProfiler {
       genericStatistics, kllProfiling, kllParameters)
 
     val castedDataForDateTypePass: DataFrame = castTimestampDateColumns(relevantColumns, data, genericStatistics)
-    castedDataForDateTypePass.printSchema()
-    castedDataForDateTypePass.show(false)
 
     val analysisRunnerDateType = AnalysisRunner
       .onData(castedDataForDateTypePass)
@@ -280,14 +279,14 @@ object ColumnProfiler {
     }
 
   private[this] def getAnalyzersForDateType(
-                                               relevantColumnNames: Seq[String],
-                                               genericStatistics: GenericColumnStatistics,
-                                               kllProfiling: Boolean,
-                                               kllParameters: Option[KLLParameters] = None)
+     relevantColumnNames: Seq[String],
+     genericStatistics: GenericColumnStatistics,
+     kllProfiling: Boolean,
+     kllParameters: Option[KLLParameters] = None)
   : Seq[Analyzer[_, Metric[_]]] = {
     relevantColumnNames
       .filter { name => Set(Date, String).contains(genericStatistics.typeOf(name)) }
-      .flatMap { name => Seq(MaximumDateTime(name)) }
+      .flatMap { name => Seq(MaximumDateTime(name), MinimumDateTime(name)) }
   }
 
   private[this] def getNumericColAnalyzers(
@@ -535,7 +534,17 @@ object ColumnProfiler {
       .flatten
       .toMap
 
-    DateTypeColumnStatistics(maxima)
+    val minima: Map[String, sqlTimestamp] = results.metricMap
+      .collect { case (analyzer: MinimumDateTime, metric: DateTimeMetric) =>
+        metric.value match {
+          case Success(metricValue) => Some(analyzer.column -> metricValue)
+          case _ => None
+        }
+      }
+      .flatten
+      .toMap
+
+    DateTypeColumnStatistics(maxima, minima)
   }
 
   private[this] def extractNumericStatistics(results: AnalyzerContext): NumericColumnStatistics = {
@@ -785,7 +794,8 @@ object ColumnProfiler {
               numericStats.sums.get(name),
               numericStats.stdDevs.get(name),
               numericStats.approxPercentiles.get(name),
-              dateTypeStatistics.maxima.get(name)
+              dateTypeStatistics.maxima.get(name),
+              dateTypeStatistics.minima.get(name)
             )
 
           case _ =>
