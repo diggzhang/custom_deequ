@@ -25,6 +25,8 @@ import com.amazon.deequ.repository.{MetricsRepository, ResultKey}
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.types.{BooleanType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructType, TimestampType, DataType => SparkDataType}
 
+import java.sql.{Timestamp => sqlTimestamp}
+
 private[deequ] case class GenericColumnStatistics(
     numRecords: Long,
     inferredTypes: Map[String, DataTypeInstances.Value],
@@ -48,6 +50,10 @@ private[deequ] case class NumericColumnStatistics(
     sums: Map[String, Double],
     kll: Map[String, BucketDistribution],
     approxPercentiles: Map[String, Seq[Double]]
+)
+
+private[deequ] case class DateTypeColumnStatistics(
+    maxima: Map[String, sqlTimestamp],
 )
 
 private[deequ] case class CategoricalColumnStatistics(histograms: Map[String, Distribution])
@@ -193,10 +199,12 @@ object ColumnProfiler {
       .addAnalyzers(analyzersForDateType)
 
     val analysisRunnerDateTypeResults: AnalyzerContext = analysisRunnerDateType.run()
+
+    val dateTypeStatistics: DateTypeColumnStatistics = extractDateTypeStatistics(analysisRunnerDateTypeResults)
     println(analysisRunnerDateTypeResults)
     println(analysisRunnerDateTypeResults)
-    println(analysisRunnerDateTypeResults)
-    println(analysisRunnerDateTypeResults)
+    println(dateTypeStatistics)
+    println(dateTypeStatistics)
 
     /**日期结束**/
 
@@ -227,7 +235,7 @@ object ColumnProfiler {
 
     val thirdPassResults = CategoricalColumnStatistics(histograms)
 
-    createProfiles(relevantColumns, genericStatistics, numericStatistics, thirdPassResults)
+    createProfiles(relevantColumns, genericStatistics, numericStatistics, thirdPassResults, dateTypeStatistics)
   }
 
   private[this] def getRelevantColumns(
@@ -515,6 +523,21 @@ object ColumnProfiler {
   }
 
 
+  private[this] def extractDateTypeStatistics(results: AnalyzerContext): DateTypeColumnStatistics = {
+
+    val maxima: Map[String, sqlTimestamp] = results.metricMap
+      .collect { case (analyzer: MaximumDateTime, metric: DateTimeMetric) =>
+        metric.value match {
+          case Success(metricValue) => Some(analyzer.column -> metricValue)
+          case _ => None
+        }
+      }
+      .flatten
+      .toMap
+
+    DateTypeColumnStatistics(maxima)
+  }
+
   private[this] def extractNumericStatistics(results: AnalyzerContext): NumericColumnStatistics = {
 
     val means = results.metricMap
@@ -729,7 +752,8 @@ object ColumnProfiler {
       columns: Seq[String],
       genericStats: GenericColumnStatistics,
       numericStats: NumericColumnStatistics,
-      categoricalStats: CategoricalColumnStatistics)
+      categoricalStats: CategoricalColumnStatistics,
+      dateTypeStatistics: DateTypeColumnStatistics)
     : ColumnProfiles = {
 
     val profiles = columns
@@ -745,7 +769,7 @@ object ColumnProfiler {
 
         val profile = genericStats.typeOf(name) match {
 
-          case Integral | Fractional =>
+          case Integral | Fractional | Date =>
             NumericColumnProfile(
               name,
               completeness,
@@ -760,7 +784,9 @@ object ColumnProfiler {
               numericStats.minima.get(name),
               numericStats.sums.get(name),
               numericStats.stdDevs.get(name),
-              numericStats.approxPercentiles.get(name))
+              numericStats.approxPercentiles.get(name),
+              dateTypeStatistics.maxima.get(name)
+            )
 
           case _ =>
             StandardColumnProfile(

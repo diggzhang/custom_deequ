@@ -55,7 +55,8 @@ case class NumericColumnProfile(
     minimum: Option[Double],
     sum: Option[Double],
     stdDev: Option[Double],
-    approxPercentiles: Option[Seq[Double]])
+    approxPercentiles: Option[Seq[Double]],
+    maximumDate: Option[java.sql.Timestamp] = None)
   extends ColumnProfile
 
 case class ColumnProfiles(
@@ -120,6 +121,9 @@ object ColumnProfiles {
           }
           numericColumnProfile.stdDev.foreach { stdDev =>
             columnProfileJson.addProperty("stdDev", stdDev)
+          }
+          numericColumnProfile.maximumDate.foreach { maxDate =>
+            columnProfileJson.addProperty("maxDate", maxDate.toString)
           }
 
           // KLL Sketch
