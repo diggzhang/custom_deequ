@@ -118,7 +118,7 @@ case class HdfsStateProvider(
       case _: DataType =>
         val histogram = state.asInstanceOf[DataTypeHistogram]
         persistBytes(DataTypeHistogram.toBytes(histogram.numNull, histogram.numFractional,
-          histogram.numIntegral, histogram.numBoolean, histogram.numString), identifier)
+          histogram.numIntegral, histogram.numBoolean, histogram.numString, histogram.numDate, histogram.numTimestamp), identifier)
 
       case _: ApproxCountDistinct =>
         val counters = state.asInstanceOf[ApproxCountDistinctState]

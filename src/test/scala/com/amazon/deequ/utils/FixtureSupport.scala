@@ -16,9 +16,11 @@
 
 package com.amazon.deequ.utils
 
-import org.apache.spark.sql.types.{DoubleType, LongType, MapType, StringType, StructType}
+import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.types.{DateType, DoubleType, IntegerType, LongType, MapType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
+import java.sql.{Date, Timestamp}
 import scala.util.Random
 
 
@@ -153,6 +155,60 @@ trait FixtureSupport {
       ("5", "b", null),
       ("6", "a", "f")
     ).toDF("item", "att1", "att2")
+  }
+
+  def getDfDateTypeColumns(sparkSession: SparkSession): DataFrame = {
+    import sparkSession.implicits._
+
+    val requiredTimestampSchema = StructType(
+      List(
+        StructField("__uuid__", IntegerType, true),
+        StructField("__timestamp__", TimestampType, true)
+      )
+    )
+    val requiredDateTypeSchema = StructType(
+      List(
+        StructField("__uuid__", IntegerType, true),
+        StructField("__timestamp__", DateType, true),
+        StructField("__num__", StringType, true),
+      )
+    )
+
+    val timestampDF = Seq(
+      (1, new Timestamp(1646021692)),
+      (2, new Timestamp(1646021692))
+    ).toDF().rdd
+    val dateTypeDF = Seq(
+      (1, Date.valueOf("2021-08-05"), "6666"),
+      (2, Date.valueOf("2021-08-06"), "8888")
+    ).toDF().rdd
+
+    val tsDf = Seq(
+      (1, Timestamp.valueOf("2014-01-01 23:00:01")),
+      (1, Timestamp.valueOf("2014-11-30 12:40:32")),
+      (2, Timestamp.valueOf("2016-12-29 09:54:00")),
+      (2, Timestamp.valueOf("2016-05-09 10:12:43"))
+    ).toDF("typeId","__timestamp__")
+
+    val dateTypeFrame = sparkSession.createDataFrame(dateTypeDF, requiredDateTypeSchema)
+    val timestampTypeFrame = sparkSession.createDataFrame(timestampDF, requiredTimestampSchema)
+    (timestampTypeFrame, dateTypeFrame)
+//    dateTypeFrame
+//    println("原始")
+//    tsDf.show(false)
+//    timestampTypeFrame.show(false)
+//    dateTypeFrame.show(false)
+//    println("转后")
+//    tsDf.withColumn("sss", col("__timestamp__").cast(LongType)).show(false)
+//    timestampTypeFrame.withColumn("__timestamp__", col("__timestamp__").cast(LongType))
+//      .show(false)
+//    timestampTypeFrame.withColumn("__timestamp__", col("__timestamp__").cast("date")).show(false)
+//    timestampTypeFrame.withColumn("__timestamp__", col("__timestamp__").cast("long"))
+//    timestampTypeFrame
+//    tsDf.withColumn("sss", col("__timestamp__").cast(LongType))
+    tsDf
+//    dateTypeFrame.show(false)
+//    dateTypeFrame
   }
 
   def getDfCompleteAndInCompleteColumnsDelta(sparkSession: SparkSession): DataFrame = {

@@ -17,15 +17,13 @@
 package com.amazon.deequ.profiles
 
 import scala.util.Success
-
 import com.amazon.deequ.analyzers.DataTypeInstances._
 import com.amazon.deequ.analyzers._
 import com.amazon.deequ.analyzers.runners.{AnalysisRunBuilder, AnalysisRunner, AnalyzerContext, ReusingNotPossibleResultsMissingException}
 import com.amazon.deequ.metrics._
 import com.amazon.deequ.repository.{MetricsRepository, ResultKey}
-
 import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.types.{BooleanType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructType, TimestampType, DataType => SparkDataType}
+import org.apache.spark.sql.types.{BooleanType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructType, TimestampType, DataType => SparkDataType}
 
 private[deequ] case class GenericColumnStatistics(
     numRecords: Long,
@@ -112,7 +110,7 @@ object ColumnProfiler {
     }
 
     // Find columns we want to profile
-    val relevantColumns = getRelevantColumns(data.schema, restrictToColumns)
+    val relevantColumns: Seq[String] = getRelevantColumns(data.schema, restrictToColumns)
 
     // First pass
     if (printStatusUpdates) {
@@ -152,7 +150,7 @@ object ColumnProfiler {
     }
 
     // We cast all string columns that were detected as numeric
-    val castedDataForSecondPass = castNumericStringColumns(relevantColumns, data,
+    val castedDataForSecondPass: DataFrame = castNumericStringColumns(relevantColumns, data,
       genericStatistics)
 
     // We compute mean, stddev, min, max for all numeric columns
@@ -178,6 +176,29 @@ object ColumnProfiler {
     if (printStatusUpdates) {
       println("### PROFILING: Computing histograms of low-cardinality columns in pass (3/3)...")
     }
+
+    /***
+     * 日期类型计算测试
+     */
+
+    val analyzersForDateType = getAnalyzersForDateType(relevantColumns,
+      genericStatistics, kllProfiling, kllParameters)
+
+    val castedDataForDateTypePass: DataFrame = castTimestampDateColumns(relevantColumns, data, genericStatistics)
+    castedDataForDateTypePass.printSchema()
+    castedDataForDateTypePass.show(false)
+
+    val analysisRunnerDateType = AnalysisRunner
+      .onData(castedDataForDateTypePass)
+      .addAnalyzers(analyzersForDateType)
+
+    val analysisRunnerDateTypeResults: AnalyzerContext = analysisRunnerDateType.run()
+    println(analysisRunnerDateTypeResults)
+    println(analysisRunnerDateTypeResults)
+    println(analysisRunnerDateTypeResults)
+    println(analysisRunnerDateTypeResults)
+
+    /**日期结束**/
 
     // We compute exact histograms for all low-cardinality string columns, find those here
     val targetColumnsForHistograms = findTargetColumnsForHistograms(data.schema, genericStatistics,
@@ -249,6 +270,17 @@ object ColumnProfiler {
         .filter { name => Set(Integral, Fractional).contains(genericStatistics.typeOf(name)) }
         .flatMap { name => getNumericColAnalyzers(name, kllProfiling, kllParameters) }
     }
+
+  private[this] def getAnalyzersForDateType(
+                                               relevantColumnNames: Seq[String],
+                                               genericStatistics: GenericColumnStatistics,
+                                               kllProfiling: Boolean,
+                                               kllParameters: Option[KLLParameters] = None)
+  : Seq[Analyzer[_, Metric[_]]] = {
+    relevantColumnNames
+      .filter { name => Set(Date, String).contains(genericStatistics.typeOf(name)) }
+      .flatMap { name => Seq(MaximumDateTime(name)) }
+  }
 
   private[this] def getNumericColAnalyzers(
       column: String,
@@ -426,7 +458,8 @@ object ColumnProfiler {
           case ShortType | LongType | IntegerType => Integral
           case DecimalType() | FloatType | DoubleType => Fractional
           case BooleanType => Boolean
-          case TimestampType => String // TODO We should have support for dates in deequ...
+          case TimestampType => Date// TODO We should have support for dates in deequ...
+          case DateType => Date
           case _ =>
             println(s"Unable to map type ${field.dataType}")
             Unknown
@@ -454,6 +487,26 @@ object ColumnProfiler {
       castedData = genericStatistics.typeOf(name) match {
         case Integral => castColumn(castedData, name, LongType)
         case Fractional => castColumn(castedData, name, DoubleType)
+        case _ => castedData
+      }
+    }
+
+    castedData
+  }
+
+  private[this] def castTimestampDateColumns(
+                                              columns: Seq[String],
+                                              originalData: DataFrame,
+                                              genericStatistics: GenericColumnStatistics)
+  : DataFrame = {
+
+    var castedData = originalData
+
+    columns.foreach { name =>
+
+      castedData = genericStatistics.typeOf(name) match {
+        case Date => castColumn(castedData, name, DateType)
+        case Timestamp => castColumn(castedData, name, DateType)
         case _ => castedData
       }
     }
