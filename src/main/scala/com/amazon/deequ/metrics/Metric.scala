@@ -16,6 +16,7 @@
 
 package com.amazon.deequ.metrics
 
+import java.sql.Timestamp
 import scala.util.{Failure, Success, Try}
 
 object Entity extends Enumeration {
@@ -63,6 +64,23 @@ case class KeyedDoubleMetric(
       .toSeq
     } else {
       Seq(DoubleMetric(entity, s"$name", instance, Failure(value.failed.get)))
+    }
+  }
+}
+
+case class DateTimeMetric(
+                           entity: Entity.Value,
+                           name: String,
+                           instance: String,
+                           value: Try[Timestamp])
+  extends Metric[Timestamp] {
+
+  override def flatten(): Seq[DoubleMetric] = {
+    if (value.isSuccess) {
+      Seq(DoubleMetric(entity, "Timestamp milliseconds", instance,
+        Success(value.get.getTime.toDouble)))
+    } else {
+      Seq(DoubleMetric(entity, "Timestamp milliseconds", instance, Failure(value.failed.get)))
     }
   }
 }

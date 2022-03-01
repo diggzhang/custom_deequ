@@ -16,16 +16,17 @@
 
 package com.amazon.deequ.profiles
 
-import scala.util.Success
-
+import scala.util.{Failure, Success}
 import com.amazon.deequ.analyzers.DataTypeInstances._
 import com.amazon.deequ.analyzers._
 import com.amazon.deequ.analyzers.runners.{AnalysisRunBuilder, AnalysisRunner, AnalyzerContext, ReusingNotPossibleResultsMissingException}
 import com.amazon.deequ.metrics._
 import com.amazon.deequ.repository.{MetricsRepository, ResultKey}
-
 import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.types.{BooleanType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructType, TimestampType, DataType => SparkDataType}
+import org.apache.spark.sql.types.{BooleanType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructType, TimestampType, DataType => SparkDataType}
+
+import java.sql.{Timestamp => sqlTimestamp}
+import scala.collection.immutable
 
 private[deequ] case class GenericColumnStatistics(
     numRecords: Long,
@@ -50,6 +51,12 @@ private[deequ] case class NumericColumnStatistics(
     sums: Map[String, Double],
     kll: Map[String, BucketDistribution],
     approxPercentiles: Map[String, Seq[Double]]
+)
+
+private[deequ] case class DateTypeColumnStatistics(
+    maxima: Map[String, sqlTimestamp],
+    minima: Map[String, sqlTimestamp],
+    distribution: Seq[Map[String, Double]]
 )
 
 private[deequ] case class CategoricalColumnStatistics(histograms: Map[String, Distribution])
@@ -112,7 +119,7 @@ object ColumnProfiler {
     }
 
     // Find columns we want to profile
-    val relevantColumns = getRelevantColumns(data.schema, restrictToColumns)
+    val relevantColumns: Seq[String] = getRelevantColumns(data.schema, restrictToColumns)
 
     // First pass
     if (printStatusUpdates) {
@@ -152,7 +159,7 @@ object ColumnProfiler {
     }
 
     // We cast all string columns that were detected as numeric
-    val castedDataForSecondPass = castNumericStringColumns(relevantColumns, data,
+    val castedDataForSecondPass: DataFrame = castNumericStringColumns(relevantColumns, data,
       genericStatistics)
 
     // We compute mean, stddev, min, max for all numeric columns
@@ -178,6 +185,25 @@ object ColumnProfiler {
     if (printStatusUpdates) {
       println("### PROFILING: Computing histograms of low-cardinality columns in pass (3/3)...")
     }
+
+    /***
+     * 日期类型计算测试
+     */
+
+    val analyzersForDateType = getAnalyzersForDateType(relevantColumns,
+      genericStatistics, kllProfiling, kllParameters)
+
+    val castedDataForDateTypePass: DataFrame = castTimestampDateColumns(relevantColumns, data, genericStatistics)
+
+    val analysisRunnerDateType = AnalysisRunner
+      .onData(castedDataForDateTypePass)
+      .addAnalyzers(analyzersForDateType)
+
+    val analysisRunnerDateTypeResults: AnalyzerContext = analysisRunnerDateType.run()
+
+    val dateTypeStatistics: DateTypeColumnStatistics = extractDateTypeStatistics(analysisRunnerDateTypeResults)
+
+    /**日期结束**/
 
     // We compute exact histograms for all low-cardinality string columns, find those here
     val targetColumnsForHistograms = findTargetColumnsForHistograms(data.schema, genericStatistics,
@@ -206,7 +232,7 @@ object ColumnProfiler {
 
     val thirdPassResults = CategoricalColumnStatistics(histograms)
 
-    createProfiles(relevantColumns, genericStatistics, numericStatistics, thirdPassResults)
+    createProfiles(relevantColumns, genericStatistics, numericStatistics, thirdPassResults, dateTypeStatistics)
   }
 
   private[this] def getRelevantColumns(
@@ -249,6 +275,19 @@ object ColumnProfiler {
         .filter { name => Set(Integral, Fractional).contains(genericStatistics.typeOf(name)) }
         .flatMap { name => getNumericColAnalyzers(name, kllProfiling, kllParameters) }
     }
+
+  private[this] def getAnalyzersForDateType(
+     relevantColumnNames: Seq[String],
+     genericStatistics: GenericColumnStatistics,
+     kllProfiling: Boolean,
+     kllParameters: Option[KLLParameters] = None)
+  : Seq[Analyzer[_, Metric[_]]] = {
+    relevantColumnNames
+      .filter { name => Set(Date, String).contains(genericStatistics.typeOf(name)) }
+      .flatMap { name =>
+        Seq(MaximumDateTime(name), MinimumDateTime(name), DateTimeDistribution(name, DistributionInterval.DAILY))
+      }
+  }
 
   private[this] def getNumericColAnalyzers(
       column: String,
@@ -400,7 +439,7 @@ object ColumnProfiler {
         case _ => true
       }
       .collect { case (analyzer: DataType, metric: HistogramMetric) =>
-          val typeCounts = metric.value.get.values
+          val typeCounts: Map[String, Long] = metric.value.get.values
             .map { case (key, distValue) => key -> distValue.absolute }
           analyzer.column -> typeCounts
       }
@@ -426,7 +465,8 @@ object ColumnProfiler {
           case ShortType | LongType | IntegerType => Integral
           case DecimalType() | FloatType | DoubleType => Fractional
           case BooleanType => Boolean
-          case TimestampType => String // TODO We should have support for dates in deequ...
+          case TimestampType => Date// TODO We should have support for dates in deequ...
+          case DateType => Date
           case _ =>
             println(s"Unable to map type ${field.dataType}")
             Unknown
@@ -461,6 +501,57 @@ object ColumnProfiler {
     castedData
   }
 
+  private[this] def castTimestampDateColumns(
+                                              columns: Seq[String],
+                                              originalData: DataFrame,
+                                              genericStatistics: GenericColumnStatistics)
+  : DataFrame = {
+
+    var castedData = originalData
+
+    columns.foreach { name =>
+
+      castedData = genericStatistics.typeOf(name) match {
+        case Date => castColumn(castedData, name, DateType)
+        case Timestamp => castColumn(castedData, name, DateType)
+        case _ => castedData
+      }
+    }
+
+    castedData
+  }
+
+
+  private[this] def extractDateTypeStatistics(results: AnalyzerContext): DateTypeColumnStatistics = {
+
+    val maxima: Map[String, sqlTimestamp] = results.metricMap
+      .collect { case (analyzer: MaximumDateTime, metric: DateTimeMetric) =>
+        metric.value match {
+          case Success(metricValue) => Some(analyzer.column -> metricValue)
+          case _ => None
+        }
+      }
+      .flatten
+      .toMap
+
+    val minima: Map[String, sqlTimestamp] = results.metricMap
+      .collect { case (analyzer: MinimumDateTime, metric: DateTimeMetric) =>
+        metric.value match {
+          case Success(metricValue) => Some(analyzer.column -> metricValue)
+          case _ => None
+        }
+      }
+      .flatten
+      .toMap
+
+    val distribution: Seq[Map[String, Double]] = results.metricMap
+      .collect { case (analyzer: DateTimeDistribution, metrics: HistogramMetric) =>
+        metrics.value.get.values
+          .map { case (key, distValue) => key -> distValue.ratio }
+      }.toSeq
+
+    DateTypeColumnStatistics(maxima, minima, distribution)
+  }
 
   private[this] def extractNumericStatistics(results: AnalyzerContext): NumericColumnStatistics = {
 
@@ -556,7 +647,7 @@ object ColumnProfiler {
     : Seq[String] = {
 
     val validSparkDataTypesForHistograms: Set[SparkDataType] = Set(
-      StringType, BooleanType, DoubleType, FloatType, IntegerType, LongType, ShortType
+      StringType, BooleanType, DoubleType, FloatType, IntegerType, LongType, ShortType, DateType, TimestampType
     )
     val originalStringNumericOrBooleanColumns = schema
       .filter { field => validSparkDataTypesForHistograms.contains(field.dataType) }
@@ -566,7 +657,7 @@ object ColumnProfiler {
     genericStatistics.approximateNumDistincts
       .filter { case (column, _) =>
         originalStringNumericOrBooleanColumns.contains(column) &&
-          Set(String, Boolean, Integral, Fractional).contains(genericStatistics.typeOf(column))
+          Set(String, Boolean, Integral, Fractional, Date).contains(genericStatistics.typeOf(column))
       }
       .filter { case (_, count) => count <= lowCardinalityHistogramThreshold }
       .map { case (column, _) => column }
@@ -676,7 +767,8 @@ object ColumnProfiler {
       columns: Seq[String],
       genericStats: GenericColumnStatistics,
       numericStats: NumericColumnStatistics,
-      categoricalStats: CategoricalColumnStatistics)
+      categoricalStats: CategoricalColumnStatistics,
+      dateTypeStatistics: DateTypeColumnStatistics)
     : ColumnProfiles = {
 
     val profiles = columns
@@ -692,7 +784,7 @@ object ColumnProfiler {
 
         val profile = genericStats.typeOf(name) match {
 
-          case Integral | Fractional =>
+          case Integral | Fractional | Date =>
             NumericColumnProfile(
               name,
               completeness,
@@ -707,7 +799,10 @@ object ColumnProfiler {
               numericStats.minima.get(name),
               numericStats.sums.get(name),
               numericStats.stdDevs.get(name),
-              numericStats.approxPercentiles.get(name))
+              numericStats.approxPercentiles.get(name),
+              dateTypeStatistics.maxima.get(name),
+              dateTypeStatistics.minima.get(name)
+            )
 
           case _ =>
             StandardColumnProfile(

@@ -32,6 +32,8 @@ private[sql] class StatefulDataType extends UserDefinedAggregateFunction {
   val INTEGRAL_POS = 2
   val BOOLEAN_POS = 3
   val STRING_POS = 4
+  val DATE_POS = 5
+  val TIMESTAMP_POS = 6
 
   val FRACTIONAL: Regex = """^(-|\+)? ?\d+((\.\d+)|((?:\.\d+)?[Ee][-+]?\d+))$""".r
   val INTEGRAL: Regex = """^(-|\+)? ?\d+$""".r
@@ -41,7 +43,7 @@ private[sql] class StatefulDataType extends UserDefinedAggregateFunction {
 
   override def bufferSchema: StructType = StructType(StructField("null", LongType) ::
     StructField("fractional", LongType) :: StructField("integral", LongType) ::
-    StructField("boolean", LongType) :: StructField("string", LongType) :: Nil)
+    StructField("boolean", LongType) :: StructField("string", LongType) :: StructField("date", DateType) :: Nil)
 
   override def dataType: types.DataType = BinaryType
 
@@ -53,6 +55,8 @@ private[sql] class StatefulDataType extends UserDefinedAggregateFunction {
     buffer(INTEGRAL_POS) = 0L
     buffer(BOOLEAN_POS) = 0L
     buffer(STRING_POS) = 0L
+    buffer(DATE_POS) = 0L
+    buffer(TIMESTAMP_POS) = 0L
   }
 
   override def update(buffer: MutableAggregationBuffer, input: Row): Unit = {
@@ -74,10 +78,11 @@ private[sql] class StatefulDataType extends UserDefinedAggregateFunction {
     buffer1(INTEGRAL_POS) = buffer1.getLong(INTEGRAL_POS) + buffer2.getLong(INTEGRAL_POS)
     buffer1(BOOLEAN_POS) = buffer1.getLong(BOOLEAN_POS) + buffer2.getLong(BOOLEAN_POS)
     buffer1(STRING_POS) = buffer1.getLong(STRING_POS) + buffer2.getLong(STRING_POS)
+    buffer1(DATE_POS) = buffer1.getLong(DATE_POS) + buffer2.getLong(DATE_POS)
   }
 
   override def evaluate(buffer: Row): Any = {
     DataTypeHistogram.toBytes(buffer.getLong(NULL_POS), buffer.getLong(FRACTIONAL_POS),
-      buffer.getLong(INTEGRAL_POS), buffer.getLong(BOOLEAN_POS), buffer.getLong(STRING_POS))
+      buffer.getLong(INTEGRAL_POS), buffer.getLong(BOOLEAN_POS), buffer.getLong(STRING_POS), buffer.getLong(DATE_POS), buffer.getLong(TIMESTAMP_POS))
   }
 }

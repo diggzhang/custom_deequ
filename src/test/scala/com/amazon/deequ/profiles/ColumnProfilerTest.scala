@@ -554,6 +554,39 @@ class ColumnProfilerTest extends WordSpec with Matchers with SparkContextSpec
 
   }
 
+
+  "return for test dateType timestampType dataType" in withSparkSession { session =>
+
+    val data = getDfDateTypeColumns(session)
+
+//    val col = "__num__"
+    val col = "__timestamp__"
+    val actualColumnProfile: ColumnProfile = ColumnProfiler.profile(data, Option(Seq(col)), false, 100,
+//      predefinedTypes =
+//        Map[String, DataTypeInstances.Value]("item"-> DataTypeInstances.String)
+              )
+      .profiles(col)
+
+    println(actualColumnProfile)
+
+//    val expectedColumnProfile = StandardColumnProfile(
+//      "att2",
+//      2.0 / 3.0,
+//      2,
+//      DataTypeInstances.String,
+//      true,
+//      Map(
+//        "Boolean" -> 0,
+//        "Fractional" -> 0,
+//        "Integral" -> 0,
+//        "Unknown" -> 2,
+//        "String" -> 4
+//      ),
+//      None)
+
+//    assert(actualColumnProfile == expectedColumnProfile)
+  }
+
   private[this] def assertSameColumnProfiles(
       actualProfiles: Map[String, ColumnProfile],
       expectedProfiles: List[ColumnProfile])
