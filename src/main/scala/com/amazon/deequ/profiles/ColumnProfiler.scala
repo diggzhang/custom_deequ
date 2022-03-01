@@ -26,6 +26,7 @@ import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.types.{BooleanType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructType, TimestampType, DataType => SparkDataType}
 
 import java.sql.{Timestamp => sqlTimestamp}
+import scala.collection.immutable
 
 private[deequ] case class GenericColumnStatistics(
     numRecords: Long,
@@ -55,7 +56,7 @@ private[deequ] case class NumericColumnStatistics(
 private[deequ] case class DateTypeColumnStatistics(
     maxima: Map[String, sqlTimestamp],
     minima: Map[String, sqlTimestamp],
-    distribution: Option[Map[(sqlTimestamp, sqlTimestamp), Long]] = None
+    distribution: Seq[Map[String, Double]]
 )
 
 private[deequ] case class CategoricalColumnStatistics(histograms: Map[String, Distribution])
@@ -201,10 +202,6 @@ object ColumnProfiler {
     val analysisRunnerDateTypeResults: AnalyzerContext = analysisRunnerDateType.run()
 
     val dateTypeStatistics: DateTypeColumnStatistics = extractDateTypeStatistics(analysisRunnerDateTypeResults)
-    println(analysisRunnerDateTypeResults)
-    println(analysisRunnerDateTypeResults)
-    println(dateTypeStatistics)
-    println(dateTypeStatistics)
 
     /**日期结束**/
 
@@ -442,7 +439,7 @@ object ColumnProfiler {
         case _ => true
       }
       .collect { case (analyzer: DataType, metric: HistogramMetric) =>
-          val typeCounts = metric.value.get.values
+          val typeCounts: Map[String, Long] = metric.value.get.values
             .map { case (key, distValue) => key -> distValue.absolute }
           analyzer.column -> typeCounts
       }
@@ -547,9 +544,13 @@ object ColumnProfiler {
       .flatten
       .toMap
 
-    val distribution = results.metricMap
+    val distribution: Seq[Map[String, Double]] = results.metricMap
+      .collect { case (analyzer: DateTimeDistribution, metrics: HistogramMetric) =>
+        metrics.value.get.values
+          .map { case (key, distValue) => key -> distValue.ratio }
+      }.toSeq
 
-    DateTypeColumnStatistics(maxima, minima, None)
+    DateTypeColumnStatistics(maxima, minima, distribution)
   }
 
   private[this] def extractNumericStatistics(results: AnalyzerContext): NumericColumnStatistics = {
@@ -646,7 +647,7 @@ object ColumnProfiler {
     : Seq[String] = {
 
     val validSparkDataTypesForHistograms: Set[SparkDataType] = Set(
-      StringType, BooleanType, DoubleType, FloatType, IntegerType, LongType, ShortType
+      StringType, BooleanType, DoubleType, FloatType, IntegerType, LongType, ShortType, DateType, TimestampType
     )
     val originalStringNumericOrBooleanColumns = schema
       .filter { field => validSparkDataTypesForHistograms.contains(field.dataType) }
@@ -656,7 +657,7 @@ object ColumnProfiler {
     genericStatistics.approximateNumDistincts
       .filter { case (column, _) =>
         originalStringNumericOrBooleanColumns.contains(column) &&
-          Set(String, Boolean, Integral, Fractional).contains(genericStatistics.typeOf(column))
+          Set(String, Boolean, Integral, Fractional, Date).contains(genericStatistics.typeOf(column))
       }
       .filter { case (_, count) => count <= lowCardinalityHistogramThreshold }
       .map { case (column, _) => column }

@@ -561,7 +561,7 @@ class ColumnProfilerTest extends WordSpec with Matchers with SparkContextSpec
 
 //    val col = "__num__"
     val col = "__timestamp__"
-    val actualColumnProfile: ColumnProfile = ColumnProfiler.profile(data, Option(Seq(col)), false, 1,
+    val actualColumnProfile: ColumnProfile = ColumnProfiler.profile(data, Option(Seq(col)), false, 100,
 //      predefinedTypes =
 //        Map[String, DataTypeInstances.Value]("item"-> DataTypeInstances.String)
               )
