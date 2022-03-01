@@ -16,7 +16,7 @@
 
 package com.amazon.deequ.profiles
 
-import scala.util.Success
+import scala.util.{Failure, Success}
 import com.amazon.deequ.analyzers.DataTypeInstances._
 import com.amazon.deequ.analyzers._
 import com.amazon.deequ.analyzers.runners.{AnalysisRunBuilder, AnalysisRunner, AnalyzerContext, ReusingNotPossibleResultsMissingException}
@@ -54,7 +54,8 @@ private[deequ] case class NumericColumnStatistics(
 
 private[deequ] case class DateTypeColumnStatistics(
     maxima: Map[String, sqlTimestamp],
-    minima: Map[String, sqlTimestamp]
+    minima: Map[String, sqlTimestamp],
+    distribution: Option[Map[(sqlTimestamp, sqlTimestamp), Long]] = None
 )
 
 private[deequ] case class CategoricalColumnStatistics(histograms: Map[String, Distribution])
@@ -286,7 +287,9 @@ object ColumnProfiler {
   : Seq[Analyzer[_, Metric[_]]] = {
     relevantColumnNames
       .filter { name => Set(Date, String).contains(genericStatistics.typeOf(name)) }
-      .flatMap { name => Seq(MaximumDateTime(name), MinimumDateTime(name)) }
+      .flatMap { name =>
+        Seq(MaximumDateTime(name), MinimumDateTime(name), DateTimeDistribution(name, DistributionInterval.DAILY))
+      }
   }
 
   private[this] def getNumericColAnalyzers(
@@ -544,7 +547,9 @@ object ColumnProfiler {
       .flatten
       .toMap
 
-    DateTypeColumnStatistics(maxima, minima)
+    val distribution = results.metricMap
+
+    DateTypeColumnStatistics(maxima, minima, None)
   }
 
   private[this] def extractNumericStatistics(results: AnalyzerContext): NumericColumnStatistics = {
